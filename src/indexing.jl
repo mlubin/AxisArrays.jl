@@ -38,11 +38,11 @@ Base.show(io::IO, v::ExactValue) = print(io, string("ExactValue(", v.val, ")"))
 Base.IndexStyle(::Type{AxisArray{T,N,D,Ax}}) where {T,N,D,Ax} = IndexStyle(D)
 
 # Simple scalar indexing where we just set or return scalars
-@propagate_inbounds Base.getindex(A::AxisArray, idxs::Int...) = A.data[idxs...]
-@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs::Int...) = (A.data[idxs...] = v)
+#@propagate_inbounds Base.getindex(A::AxisArray, idxs::Int...) = A.data[idxs...]
+#@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs::Int...) = (A.data[idxs...] = v)
 
 # Cartesian iteration
-Base.eachindex(A::AxisArray) = eachindex(A.data)
+#Base.eachindex(A::AxisArray) = eachindex(A.data)
 
 """
     reaxis(A::AxisArray, I...)
@@ -102,16 +102,16 @@ end
     newaxes
 end
 
-@propagate_inbounds function Base.getindex(A::AxisArray, idxs::Idx...)
-    AxisArray(A.data[idxs...], reaxis(A, idxs...))
-end
+#@propagate_inbounds function Base.getindex(A::AxisArray, idxs::Idx...)
+#    AxisArray(A.data[to_index(A,idxs...)...], reaxis(A, idxs...))
+#end
 
 # To resolve ambiguities, we need several definitions
 using Base.AbstractCartesianIndex
 @propagate_inbounds Base.view(A::AxisArray, idxs::Idx...) = AxisArray(view(A.data, idxs...), reaxis(A, idxs...))
 
 # Setindex is so much simpler. Just assign it to the data:
-@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs::Idx...) = (A.data[idxs...] = v)
+#@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs::Idx...) = (A.data[to_index(A,idxs...)...] = v)
 
 # Logical indexing
 @propagate_inbounds function Base.getindex(A::AxisArray, idx::AbstractArray{Bool})
@@ -120,8 +120,16 @@ end
 @propagate_inbounds Base.setindex!(A::AxisArray, v, idx::AbstractArray{Bool}) = (A.data[idx] = v)
 
 ### Fancier indexing capabilities provided only by AxisArrays ###
-@propagate_inbounds Base.getindex(A::AxisArray, idxs...) = A[to_index(A,idxs...)...]
-@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs...) = (A[to_index(A,idxs...)...] = v)
+@propagate_inbounds function Base.getindex(A::AxisArray{T}, idxs...) where T
+    result = A.data[to_index(A,idxs...)...]
+    # TODO: rewrite with extra method to be type stable
+    if isa(result, T)
+        return result
+    else
+        return AxisArray(result, reaxis(A, idxs...))
+    end
+end
+@propagate_inbounds Base.setindex!(A::AxisArray, v, idxs...) = (A.data[to_index(A,idxs...)...] = v)
 # Deal with lots of ambiguities here
 @propagate_inbounds Base.view(A::AxisArray, idxs::ViewIndex...) = view(A, to_index(A,idxs...)...)
 @propagate_inbounds Base.view(A::AxisArray, idxs::Union{ViewIndex,AbstractCartesianIndex}...) = view(A, to_index(A,Base.IteratorsMD.flatten(idxs)...)...)
@@ -184,8 +192,8 @@ axisindexes(t, ax, idx) = error("cannot index $(typeof(ax)) with $(typeof(idx));
 
 # Dimensional axes may be indexed directly by their elements if Non-Real and unique
 # Maybe extend error message to all <: Numbers if Base allows it?
-axisindexes(::Type{Dimensional}, ax::AbstractVector, idx::Real) =
-    throw(ArgumentError("invalid index: $idx. Use `atvalue` when indexing by value."))
+#axisindexes(::Type{Dimensional}, ax::AbstractVector, idx::Real) =
+#    throw(ArgumentError("invalid index: $idx. Use `atvalue` when indexing by value."))
 function axisindexes(::Type{Dimensional}, ax::AbstractVector, idx)
     idxs = searchsorted(ax, ClosedInterval(idx,idx))
     length(idxs) > 1 && error("more than one datapoint lies on axis value $idx; use an interval to return all values")
@@ -319,8 +327,11 @@ end
             continue
         end
 
-        if I[i] <: Idx
+        if I[i] <: Idx && i > length(Ax.parameters) # trailing dimensions
             push!(ex.args, :(I[$i]))
+            n += 1
+        elseif I[i] <: Colon
+            push!(ex.args, :(Colon()))
             n += 1
         elseif I[i] <: AbstractArray{Bool}
             push!(ex.args, :(find(I[$i])))
